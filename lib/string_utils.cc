@@ -4,9 +4,11 @@
 //
 // String manipulation functions used in the RLZ library.
 
-#include "rlz/lib/string_utils.h"
+#include "rlz/win/lib/string_utils.h"
 
-#include "rlz/lib/assert.h"
+#include "base/registry.h"
+#include "base/string_util.h"
+#include "rlz/win/lib/assert.h"
 
 namespace rlz_lib {
 
@@ -50,7 +52,7 @@ int HexStringToInteger(const char* text) {
 
   int number = 0;
   int digit = 0;
-  for (; text[idx] != '\0'; idx++) {
+  for (; text[idx] != NULL; idx++) {
     if (!GetHexValue(text[idx], &digit)) {
       // Ignore trailing whitespaces, but assert on other trailing characters.
       bool only_whitespaces = true;
@@ -68,7 +70,7 @@ int HexStringToInteger(const char* text) {
 
 bool BytesToString(const unsigned char* data,
                    int data_len,
-                   std::string* string) {
+                   std::wstring* string) {
   if (!string)
     return false;
 
@@ -76,7 +78,7 @@ bool BytesToString(const unsigned char* data,
   if (data_len < 1 || !data)
     return false;
 
-  static const char kHex[] = "0123456789ABCDEF";
+  static const wchar_t* kHex = L"0123456789ABCDEF";
 
   // Fix the buffer size to begin with to avoid repeated re-allocation.
   string->resize(data_len * 2);
@@ -89,4 +91,28 @@ bool BytesToString(const unsigned char* data,
   return true;
 }
 
-}  // namespace rlz_lib
+bool RegKeyReadValue(RegKey& key, const wchar_t* name,
+                     char* value, size_t* value_size) {
+  value[0] = 0;
+
+  std::wstring value_string;
+  if (!key.ReadValue(name, &value_string)) {
+    return false;
+  }
+
+  if (value_string.length() > *value_size) {
+    *value_size = value_string.length();
+    return false;
+  }
+
+  strncpy(value, WideToASCII(value_string).c_str(), *value_size);
+  value[*value_size - 1] = 0;
+  return true;
+}
+
+bool RegKeyWriteValue(RegKey& key, const wchar_t* name, const char* value) {
+  std::wstring value_string(ASCIIToWide(value));
+  return key.WriteValue(name, value_string.c_str());
+}
+
+}

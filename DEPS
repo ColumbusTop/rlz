@@ -3,7 +3,7 @@
 # found in the COPYING file.
 
 vars = {
-  "chrev": "@119173"
+  "chrev": "@56144"
 }
 
 deps = {
@@ -34,26 +34,16 @@ deps = {
   "src/testing":
     "http://src.chromium.org/svn/trunk/src/testing" + Var("chrev"),
 
-  "src/testing/gmock":
-    "http://googlemock.googlecode.com/svn/trunk@374",
-
   "src/testing/gtest":
-    "http://googletest.googlecode.com/svn/trunk@492",
+    "http://googletest.googlecode.com/svn/trunk@408",
 
   "src/tools/gyp":
-    "http://gyp.googlecode.com/svn/trunk@1233",
-
-  "src/tools/win":
-    "http://src.chromium.org/svn/trunk/src/tools/win" + Var("chrev"),
-
-  # If using rlz with chrome's networking library, add it and its dependencies
-  # here.
+    "http://gyp.googlecode.com/svn/trunk@818",
 }
 
 include_rules = [
+  "+base",
   "+build",
-  "+net",  # This is only used when force_rlz_use_chrome_net=1 is passed to gyp.
-  "+third_party/zlib",
 ]
 
 hooks = [

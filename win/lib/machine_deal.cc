@@ -1,4 +1,4 @@
-// Copyright 2011 Google Inc. All Rights Reserved.
+// Copyright 2010 Google Inc. All Rights Reserved.
 // Use of this source code is governed by an Apache-style license that can be
 // found in the COPYING file.
 //
@@ -7,21 +7,22 @@
 #include "rlz/win/lib/machine_deal.h"
 
 #include <windows.h>
+#include <Sddl.h>  // For ConvertSidToStringSidW.
 #include <vector>
 
 #include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/string_split.h"
+#include "base/registry.h"
+#include "base/scoped_ptr.h"
+#include "base/sha1.h"
 #include "base/string_util.h"
-#include "base/stringprintf.h"
-#include "base/win/registry.h"
-#include "rlz/lib/assert.h"
-#include "rlz/lib/lib_values.h"
+#include "rlz/win/lib/assert.h"
+#include "rlz/win/lib/crc8.h"
 #include "rlz/win/lib/lib_mutex.h"
-#include "rlz/win/lib/registry_util.h"
-#include "rlz/win/lib/rlz_value_store_registry.h"
+#include "rlz/win/lib/lib_values.h"
+#include "rlz/win/lib/process_info.h"
+#include "rlz/win/lib/string_utils.h"
+#include "rlz/win/lib/user_key.h"
 
-const wchar_t kDccValueName[]             = L"DCC";
 
 namespace {
 
@@ -54,7 +55,7 @@ bool IsGoodDccChar(char ch) {
 }
 
 // This function will remove bad rlz chars and also limit the max rlz to some
-// reasonable size. It also assumes that normalized_dcc is at least
+// reasonable size.  It also assumes that normalized_dcc is at least
 // kMaxDccLength+1 long.
 void NormalizeDcc(const char* raw_dcc, char* normalized_dcc) {
   int index = 0;
@@ -107,7 +108,7 @@ bool GetResponseValue(const std::string& response_line,
     return false;
 
   std::vector<std::string> tokens;
-  base::SplitString(response_line, ':', &tokens);
+  SplitString(response_line, ':', &tokens);
   if (tokens.size() != 2)
     return false;
 
@@ -118,6 +119,7 @@ bool GetResponseValue(const std::string& response_line,
 }
 
 }  // namespace anonymous
+
 
 namespace rlz_lib {
 
@@ -135,9 +137,8 @@ bool MachineDealCode::Set(const char* dcc) {
     return false;
   }
 
-  base::win::RegKey hklm_key(HKEY_LOCAL_MACHINE,
-                             RlzValueStoreRegistry::GetWideLibKeyName().c_str(),
-                             KEY_READ | KEY_WRITE | KEY_WOW64_32KEY);
+  RegKey hklm_key(HKEY_LOCAL_MACHINE, kLibKeyName,
+                  KEY_READ | KEY_WRITE | KEY_WOW64_32KEY);
   if (!hklm_key.Valid()) {
     ASSERT_STRING("MachineDealCode::Set: Unable to create / open machine key."
                   " Did you call rlz_lib::CreateMachineState()?");
@@ -157,6 +158,7 @@ bool MachineDealCode::Set(const char* dcc) {
 
   return true;
 }
+
 
 bool MachineDealCode::GetNewCodeFromPingResponse(const char* response,
     bool* has_new_dcc, char* new_dcc, int new_dcc_size) {
@@ -223,6 +225,7 @@ bool MachineDealCode::SetFromPingResponse(const char* response) {
   return response_valid;
 }
 
+
 bool MachineDealCode::GetAsCgi(char* cgi, int cgi_size) {
   if (!cgi || cgi_size <= 0) {
     ASSERT_STRING("MachineDealCode::GetAsCgi: Invalid buffer");
@@ -232,7 +235,7 @@ bool MachineDealCode::GetAsCgi(char* cgi, int cgi_size) {
   cgi[0] = 0;
 
   std::string cgi_arg;
-  base::StringAppendF(&cgi_arg, "%s=", kDccCgiVariable);
+  StringAppendF(&cgi_arg, "%s=", kDccCgiVariable);
   int cgi_arg_length = cgi_arg.size();
 
   if (cgi_arg_length >= cgi_size) {
@@ -249,6 +252,7 @@ bool MachineDealCode::GetAsCgi(char* cgi, int cgi_size) {
   return true;
 }
 
+
 bool MachineDealCode::Get(char* dcc, int dcc_size) {
   LibMutex lock;
   if (lock.failed())
@@ -261,9 +265,7 @@ bool MachineDealCode::Get(char* dcc, int dcc_size) {
 
   dcc[0] = 0;
 
-  base::win::RegKey dcc_key(HKEY_LOCAL_MACHINE,
-                            RlzValueStoreRegistry::GetWideLibKeyName().c_str(),
-                            KEY_READ | KEY_WOW64_32KEY);
+  RegKey dcc_key(HKEY_LOCAL_MACHINE, kLibKeyName, KEY_READ | KEY_WOW64_32KEY);
   if (!dcc_key.Valid())
     return false;  // no DCC key.
 
@@ -277,10 +279,10 @@ bool MachineDealCode::Get(char* dcc, int dcc_size) {
   return true;
 }
 
+
 bool MachineDealCode::Clear() {
-  base::win::RegKey dcc_key(HKEY_LOCAL_MACHINE,
-                            RlzValueStoreRegistry::GetWideLibKeyName().c_str(),
-                            KEY_READ | KEY_WRITE | KEY_WOW64_32KEY);
+  RegKey dcc_key(HKEY_LOCAL_MACHINE, kLibKeyName,
+                 KEY_READ | KEY_WRITE | KEY_WOW64_32KEY);
   if (!dcc_key.Valid())
     return false;  // no DCC key.
 
@@ -289,7 +291,7 @@ bool MachineDealCode::Clear() {
   // Verify deletion.
   wchar_t dcc[kMaxDccLength + 1];
   DWORD dcc_size = arraysize(dcc);
-  if (dcc_key.ReadValue(kDccValueName, dcc, &dcc_size, NULL) == ERROR_SUCCESS) {
+  if (dcc_key.ReadValue(kDccValueName, dcc, &dcc_size)) {
     ASSERT_STRING("MachineDealCode::Clear: Could not delete the DCC value.");
     return false;
   }
@@ -297,4 +299,166 @@ bool MachineDealCode::Clear() {
   return true;
 }
 
-}  // namespace rlz_lib
+static bool GetSystemVolumeSerialNumber(int* number) {
+  if (!number)
+    return false;
+
+  *number = 0;
+
+  // Find the system root path (e.g: C:\).
+  wchar_t system_path[MAX_PATH + 1];
+  if (!GetSystemDirectoryW(system_path, MAX_PATH))
+    return false;
+
+  wchar_t* first_slash = wcspbrk(system_path, L"\\/");
+  if (first_slash != NULL)
+    *(first_slash + 1) = 0;
+
+  DWORD number_local = 0;
+  if (!GetVolumeInformationW(system_path, NULL, 0, &number_local, NULL, NULL,
+                             NULL, 0))
+    return false;
+
+  *number = number_local;
+  return true;
+}
+
+bool GetComputerSid(const wchar_t* account_name, SID* sid, DWORD sid_size) {
+  static const DWORD kStartDomainLength = 128;  // reasonable to start with
+
+  scoped_array<wchar_t> domain_buffer(new wchar_t[kStartDomainLength]);
+  DWORD domain_size = kStartDomainLength;
+  DWORD sid_dword_size = sid_size;
+  SID_NAME_USE sid_name_use;
+
+  BOOL success = ::LookupAccountNameW(NULL, account_name, sid,
+                                      &sid_dword_size, domain_buffer.get(),
+                                      &domain_size, &sid_name_use);
+  if (!success && ::GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+    // We could have gotten the insufficient buffer error because
+    // one or both of sid and szDomain was too small. Check for that
+    // here.
+    if (sid_dword_size > sid_size)
+      return false;
+
+    if (domain_size > kStartDomainLength)
+      domain_buffer.reset(new wchar_t[domain_size]);
+
+    success = ::LookupAccountNameW(NULL, account_name, sid, &sid_dword_size,
+                                   domain_buffer.get(), &domain_size,
+                                   &sid_name_use);
+  }
+
+  return success;
+}
+
+std::wstring ConvertSidToString(SID* sid) {
+  std::wstring sid_string;
+#if _WIN32_WINNT >= 0x500
+  wchar_t* sid_buffer = NULL;
+  if (ConvertSidToStringSidW(sid, &sid_buffer)) {
+    sid_string = sid_buffer;
+    LocalFree(sid_buffer);
+  }
+#else
+  SID_IDENTIFIER_AUTHORITY* sia = ::GetSidIdentifierAuthority(sid);
+
+  if(sia->Value[0] || sia->Value[1]) {
+    SStringPrintf(&sid_string, L"S-%d-0x%02hx%02hx%02hx%02hx%02hx%02hx",
+        SID_REVISION, (USHORT)sia->Value[0], (USHORT)sia->Value[1],
+        (USHORT)sia->Value[2], (USHORT)sia->Value[3], (USHORT)sia->Value[4],
+        (USHORT)sia->Value[5]);
+  } else {
+    ULONG authority = 0;
+    for (int i = 2; i < 6; ++i) {
+      authority <<= 8;
+      authority |= sia->Value[i];
+    }
+
+    SStringPrintf(&sid_string, L"S-%d-%lu", SID_REVISION, authority);
+  }
+
+  int sub_auth_count = *::GetSidSubAuthorityCount(sid);
+  for(int i = 0; i < sub_auth_count; ++i)
+    StringAppendF(&sid_string, L"-%lu", *::GetSidSubAuthority(sid, i));
+#endif
+
+  return sid_string;
+}
+
+bool MachineDealCode::GetMachineId(std::wstring* machine_id) {
+  if (!machine_id)
+    return false;
+
+  machine_id->clear();
+
+  static std::wstring calculated_id;
+  static bool calculated = false;
+  if (calculated) {
+    *machine_id = calculated_id;
+    return true;
+  }
+
+  // The ID should be the SID hash + the Hard Drive SNo. + checksum byte.
+  static const int kSizeWithoutChecksum = base::SHA1_LENGTH + sizeof(int);
+  std::basic_string<unsigned char> id_binary(kSizeWithoutChecksum + 1, 0);
+
+  // Calculate the Windows SID.
+  std::wstring sid_string;
+  wchar_t computer_name[MAX_COMPUTERNAME_LENGTH + 1] = {0};
+  DWORD size = arraysize(computer_name);
+
+  if (GetComputerNameW(computer_name, &size)) {
+    char sid_buffer[SECURITY_MAX_SID_SIZE];
+    SID* sid = reinterpret_cast<SID*>(sid_buffer);
+    if (GetComputerSid(computer_name, sid, SECURITY_MAX_SID_SIZE)) {
+      sid_string = ConvertSidToString(sid);
+    }
+  }
+
+  // Hash the SID.
+  if (!sid_string.empty()) {
+    // In order to be compatible with the old version of RLZ, the hash of the
+    // SID must be done with all the original bytes from the unicode string.
+    // However, the chromebase SHA1 hash function takes only an std::string as
+    // input, so the unicode string needs to be converted to std::string
+    // "as is".
+    size_t byte_count = sid_string.size() * sizeof(std::wstring::value_type);
+    const char* buffer = reinterpret_cast<const char*>(sid_string.c_str());
+    std::string sid_string_buffer(buffer, byte_count);
+
+    // Note that digest can have embedded nulls.
+    std::string digest(base::SHA1HashString(sid_string_buffer));
+    VERIFY(digest.size() == base::SHA1_LENGTH);
+    std::copy(digest.begin(), digest.end(), id_binary.begin());
+  }
+
+  // Get the system drive volume serial number.
+  int volume_id = 0;
+  if (GetSystemVolumeSerialNumber(&volume_id)) {
+    // Convert from int to binary (makes big-endian).
+    for (int i = 0; i < sizeof(int); i++) {
+      int shift_bits = 8 * (sizeof(int) - i - 1);
+      id_binary[base::SHA1_LENGTH + i] = static_cast<BYTE>(
+          (volume_id >> shift_bits) & 0xFF);
+    }
+  } else {
+    ASSERT_STRING("GetMachineId: Failed to retrieve volume serial number");
+    volume_id = 0;
+  }
+
+  // Append the checksum byte.
+  if (!sid_string.empty() || (0 != volume_id))
+    Crc8::Generate(id_binary.c_str(),
+                   kSizeWithoutChecksum, &id_binary[kSizeWithoutChecksum]);
+
+  if (!BytesToString(id_binary.c_str(), kSizeWithoutChecksum + 1,
+                     &calculated_id))
+    return false;
+
+  calculated = true;
+  *machine_id = calculated_id;
+  return true;
+}
+
+};  // namespace
